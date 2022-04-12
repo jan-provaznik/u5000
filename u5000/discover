@@ -1,0 +1,146 @@
+#!/bin/env python3 -u
+#
+
+import collections
+import argparse
+import struct
+import socket
+import select
+import time
+
+# Constants: verbs
+#
+
+DEF_VERB_DSCV = b'DSCV'
+
+# Lil' helpers?
+#
+
+def format_mac (rawaddr):
+    return ':'.join('%02X' % int(octet) for octet in rawaddr)
+
+def encode_link_name (link):
+    return bytes([ * link.encode('ascii'), 0x00 ])
+
+# Socket factory
+#
+
+def socket_create_broadcast (link, host, port):
+    S = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
+    S.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    S.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+    S.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+    S.setsockopt(socket.SOL_SOCKET, socket.SO_BINDTODEVICE, encode_link_name(link))
+    S.bind((host, port))
+
+    return S
+
+# Packet processing
+#
+
+PacketHeader = collections.namedtuple('PacketHeader', [
+    'sender_mac',
+    'target_mac',
+    'bitset',
+    'length',
+    'sender_seq',
+    'target_seq',
+])
+
+def parse_packet_header (buffer):
+    if len(buffer) != 20:
+        raise ValueError('Packet header must be exactly 20 bytes long.')
+
+    headermask = '< 6s 6s 4H'
+    headerdata = struct.unpack(headermask, buffer)
+
+    return PacketHeader(* headerdata)
+
+def parse_packet (buffer):
+    H = parse_packet_header(buffer[:20])
+    P = buffer[20:]
+
+    if not (0 == H.bitset):
+        raise ValueError('Header has non-zero flags / reserved bits.')
+
+    if not(H.length == len(P)):
+        raise ValueError('Payload length mismatch.')
+
+    return H, P
+
+# Discover the beacons, the program
+#
+
+def program_discover (args):
+    R = socket_create_broadcast(args.interface, '0.0.0.0', 5000)
+
+    while 1:
+        timeleft = args.timespan
+        beacons = []
+
+        print('Collecting beacons over the next {} seconds...'.format(timeleft))
+
+        while timeleft > 0:
+
+            timetick = time.time()
+            rlist, wlist, xlist = select.select([ R ], [], [], timeleft)
+            timediff = time.time() - timetick
+            timeleft = timeleft - timediff
+
+            if len(rlist) < 1:
+                continue
+
+            d, _ = R.recvfrom(1500)
+            H, P = parse_packet(d)
+
+            if DEF_VERB_DSCV == P[:4]:
+                fields = P.decode('ascii').split('\n')
+                verb, swid, swkey, model, platform, version, * _ = fields
+
+                beacon = (format_mac(H.sender_mac), swid, swkey, model, platform, version)
+                beacons.append(beacon)
+
+                print('.', end = '', flush = 1)
+
+        if len(beacons) > 0:
+            print()
+
+        uniques = list(set(beacons))
+
+        if len(uniques) > 1:
+            pattern = 'Collected {} beacons from {} unique devices.'
+        else:
+            pattern = 'Collected {} beacons from {} unique device.'
+
+        print(pattern.format(len(beacons), len(uniques)))
+
+        for index, beacon in enumerate(uniques):
+            addr, swid, swkey, model, platform, version = beacon
+
+            print('\u25cf Device {} model "{}"'.format(1 + index, model))
+            print('  hardware address "{}"'.format(addr))
+            print('  platform "{}" with ROS version "{}"'.format(platform, version))
+
+        print()
+
+# Program, the wrapper
+#
+
+def program (args):
+    try:
+        program_discover(args)
+    except KeyboardInterrupt:
+        pass
+
+# Knock, knock.
+# Who's there?
+# Entry point.
+#
+
+if (__name__ == '__main__'):
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-i', '--interface', required = 1)
+    parser.add_argument('-t', '--timespan', required = 0, default = 9, type = int)
+    parsed = parser.parse_args()
+    program(parsed)
+
