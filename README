@@ -1,0 +1,16 @@
+u5000, an alternative implementation of the network installation protocol used
+by Mikrotik routers and switches.
+
+Device discovery
+
+  u5000/discover \
+    --interface ens3 \
+    --timespan 10
+
+  Listens for beacons sent out by Mikrotik devices that have successfully
+  entered the network installation mode. Each beacon carries information about
+  the device (model, platform, version) and is sent out in 1s intervals.
+
+  This utility collects incoming beacons over the timespan interval. It then
+  produces a list of discovered devices.
+

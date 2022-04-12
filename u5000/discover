@@ -78,7 +78,7 @@ def program_discover (args):
         timeleft = args.timespan
         beacons = []
 
-        print('Collecting beacons over the next {} seconds...'.format(timeleft))
+        print('Collecting beacons over the next {} seconds.'.format(timeleft))
 
         while timeleft > 0:
 
@@ -113,6 +113,8 @@ def program_discover (args):
             pattern = 'Collected {} beacons from {} unique device.'
 
         print(pattern.format(len(beacons), len(uniques)))
+        if len(uniques):
+            print()
 
         for index, beacon in enumerate(uniques):
             addr, swid, swkey, model, platform, version = beacon
@@ -139,8 +141,15 @@ def program (args):
 
 if (__name__ == '__main__'):
     parser = argparse.ArgumentParser()
-    parser.add_argument('-i', '--interface', required = 1)
-    parser.add_argument('-t', '--timespan', required = 0, default = 9, type = int)
+    parser.add_argument('-i', '--interface', 
+        required = 1
+    )
+    parser.add_argument('-t', '--timespan', 
+        required = 0, 
+        default = 9, 
+        type = int
+    )
+
     parsed = parser.parse_args()
     program(parsed)
 
