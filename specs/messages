@@ -46,8 +46,9 @@ Offering acceptance
 
   Signals the license key was accepted. The device now begins the installation
   process and signals the installer (STRT) once it is ready to proceed.
+  The installer must acknowledge it received the message.
 
-Start me up, babe
+Start me up, please
 
   From: Mikrotik
   Verb: STRT
@@ -58,4 +59,71 @@ Start me up, babe
 
   Warning! The verb is NOT followed by the 0x0a field terminator.
 
+Retrieve, retreat
+
+  From: Mikrotik
+  Verb: RETR
+  Args: 0
+
+  Asking for more information, acknowledging reception of data. Depends on the
+  context.
+
+  Warning! The verb is NOT followed by the 0x0a field terminator.
+
+File information
+
+  From: Installer
+  Verb: FILE
+  Args: 2 (0)
+
+  Contains information about a file to be transmitted. If there are no more
+  files, the number of arguments is 0.
+
+  1: file name
+  2: file size (in %d printf-style format)
+
+  Fields are terminated using 0x0a. Depending on the context, the Mikrotik
+  counterpart acts differently.
+
+Writing terminated 
+
+  From: Mikrotik
+  Verb: WTRM
+  Args: 0
+
+  Indicates the device has finished writing and is ready to be rebooted (if not
+  already rebooting on its own accord).
+
+  Warning! The verb is NOT followed by the 0x0a field terminator.
+
+Terminate
+
+  From: Installer
+  Verb: TERM
+  Args: 1 
+
+  Instructs the device to reboot. Optionally sends a message.
+
+There are two more message types: drivers request (DRVR, sent by Mikrotik) and
+drivers offering (OFDR, sent by the Installer). These are used solely in the
+x86 PXE boot-up process to request additional drivers.
+
+The following shame is followed when transmitting files.
+
+  (1) We are sending an actual file, that is a fully fledged FILE message was
+      previously issued and either
+
+      (a) there are still bytes to be sent
+          - send a chunk of those bytes in payload of the datagram
+		      - wait for RETR
+			    - goto (1)
+
+      (b) we have no more bytes to send
+      		- send an empty datagram.
+		      - wait for `RETR`
+			    - if there are not more files to be sent, issue an empty FILE message
+			    - if there is a file to be sent, issue a fully fledged FILE message.
+
+  (2) We are not sending a file, that is an empty FILE datagram was previously
+      issued. We then wait for WTRM message.
 
