@@ -115,14 +115,14 @@ The following shame is followed when transmitting files.
 
       (a) there are still bytes to be sent
           - send a chunk of those bytes in payload of the datagram
-		      - wait for RETR
-			    - goto (1)
+          - wait for RETR
+          - goto (1)
 
       (b) we have no more bytes to send
-      		- send an empty datagram.
-		      - wait for `RETR`
-			    - if there are not more files to be sent, issue an empty FILE message
-			    - if there is a file to be sent, issue a fully fledged FILE message.
+          - send an empty datagram.
+          - wait for `RETR`
+          - if there are not more files to be sent, issue an empty FILE message
+          - if there is a file to be sent, issue a fully fledged FILE message.
 
   (2) We are not sending a file, that is an empty FILE datagram was previously
       issued. We then wait for WTRM message.
