@@ -1,0 +1,61 @@
+                               Message reference
+
+Discovery beacon
+
+  From: Mikrotik
+  Verb: DSCV
+  Args: 5
+
+  A discovery beacon. Payload carries information about the device.
+
+  1: software id
+  2: software key
+  3: device model
+  4: device platform architecture (mips, mipsle, arm, ...)
+  5: device firmware version (routeros release)
+
+  Fields are terminated using 0x0a. 
+  Warning! The message is terminated with 0x00.
+
+Offering
+
+  From: Installer
+  Verb: OFFR
+  Args: 1
+
+  Installation offer. Optionally provides a new license key.
+
+  1: software key, optional (blank if unset)
+
+  Fields are terminated using 0x0a. 
+
+Offering rejection
+
+  From: Mikrotik
+  Verb: NACK
+  Args: 0
+
+  Signals the license key was rejected for whichever reason. The device usually
+  starts over, broadcasting discovery beacons.
+
+Offering acceptance
+
+  From: Mikrotik
+  Verb: YACK
+  Args: 0
+
+  Signals the license key was accepted. The device now begins the installation
+  process and signals the installer (STRT) once it is ready to proceed.
+
+Start me up, babe
+
+  From: Mikrotik
+  Verb: STRT
+  Args: 0
+
+  Signals that the installer should start sending the installation process on
+  its end. The installer must acknowledge it received the message.
+
+  Warning! The verb is NOT followed by the 0x0a field terminator.
+
+
