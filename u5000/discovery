@@ -121,7 +121,7 @@ def program_discover (args):
 
             print('\u25cf Device {} model "{}"'.format(1 + index, model))
             print('  hardware address "{}"'.format(addr))
-            print('  platform "{}" with ROS version "{}"'.format(platform, version))
+            print('  platform "{}" with firmware version "{}"'.format(platform, version))
 
         print()
 
