@@ -3,7 +3,7 @@ by Mikrotik routers and switches.
 
 Device discovery
 
-  u5000/discover \
+  u5000/discovery \
     --interface ens3 \
     --timespan 10
 
@@ -14,3 +14,15 @@ Device discovery
   This utility collects incoming beacons over the timespan interval. It then
   produces a list of discovered devices.
 
+Firmware installation
+
+  u5000/installer \
+    --interface ens3 \
+    --addresss 192.168.90.1 \
+    --device de:ad:be:ef:c0:de \
+    --blocksize 1000 \
+      files/routeros-7.2.1-mipsbe.npk
+
+  Pushes the specified files (NPK packages, autorun scripts) into the Mikrotik
+  device identified by the MAC address.
+      

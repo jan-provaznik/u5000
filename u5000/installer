@@ -1,0 +1,468 @@
+#!/bin/env python3 -u
+#
+
+import collections
+import argparse
+import os.path
+import struct
+import socket
+import select
+import fcntl
+import time
+
+# Helpers: hw address (en|de)coding
+#
+
+def encode_mac (what):
+    return bytes(int(each, 16)
+        for each in what.split(':'))
+
+def decode_mac (bits):
+    return ':'.join('{:02X}'.format(int(each)) 
+        for each in bits)
+
+# Helpers: ip address (en|de)coding
+#
+
+def encode_ip4 (what):
+    return bytes(int(each)
+        for each in what.split('.'))
+
+def decode_ip4 (bits):
+    return '.'.join('{}'.format(int(byte)) 
+        for byte in bits)
+
+# Helpers: network interface configuration
+#
+# man 7 ip
+# man 7 socket
+# man 7 netdevice
+#
+
+def encode_link_name (link):
+    return bytes([ * link.encode('ascii'), 0x00 ])
+
+def link_ioctl (link, what):
+  req = struct.pack('@40s', str(link).encode('ascii'))
+  with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+    return fcntl.ioctl(sock, what, req)
+
+def get_link_mtu (link):
+    res = link_ioctl(link, 0x8921)
+    return struct.unpack('@l', res[16:24])[0]
+
+def get_link_mac (link):
+    res = link_ioctl(link, 0x8927)
+    return res[18:24]
+
+def get_link_ip4 (link):
+    res = link_ioctl(link, 0x8915)
+    return res[20:24]
+
+# Helpers: socket factory
+#
+
+def socket_create_broadcast (link, host, port):
+    S = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
+    S.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    S.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+    S.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+    S.setsockopt(socket.SOL_SOCKET, socket.SO_BINDTODEVICE, encode_link_name(link))
+    S.bind((host, port))
+
+    return S
+
+# Packet processing
+#
+
+PacketHeader = collections.namedtuple('PacketHeader', [
+    'sender_mac',
+    'target_mac',
+    'bitset',
+    'length',
+    'sender_seq',
+    'target_seq',
+])
+
+def parse_packet_header (buffer):
+    if len(buffer) != 20:
+        raise ValueError('Packet header must be exactly 20 bytes long.')
+
+    headermask = '< 6s 6s 4H'
+    headerdata = struct.unpack(headermask, buffer)
+
+    return PacketHeader(* headerdata)
+
+def parse_packet (buffer):
+    H = parse_packet_header(buffer[:20])
+    P = buffer[20:]
+
+    if not (0 == H.bitset):
+        raise ValueError('Header has non-zero flags / reserved bits.')
+
+    if not(H.length == len(P)):
+        # print(H)
+        # print(len(P))
+        # print(P)
+        raise ValueError('Payload length mismatch.')
+
+    return H, P
+
+# Mikrotik, tick tock tick
+#
+# - ifname to bind to
+# - ifaddr to bind to
+# - device to talk to
+#
+# - blocksize to send by (~ 75% of mtu by default, 1400 bytes at most)
+# - filearray to send
+#
+
+class U5000Server (object):
+
+    def __init__ (self, ifname, ifaddr, device, blocksize, filearray):
+
+        if not ifaddr:
+            ifaddr = get_link_ip4(ifname)
+            ifaddr = decode_ip4(ifaddr)
+
+        if not blocksize:
+            blocksize = get_link_mtu(ifname)
+            blocksize = min(int(0.75 * blocksize), 1400)
+
+        # ...
+
+        self._ifname = ifname
+        self._ifaddr = ifaddr
+
+        self._device_mac = encode_mac(device)
+        self._server_mac = get_link_mac(ifname)
+        self._zeroes_mac = bytes([ 0x00 ] * 6)
+
+        # ...
+
+        self._blocksize = blocksize
+        self._filearray = list(self.prepare_files(filearray))
+
+        # ...
+
+        self._seq = 0
+        self._state = 0
+        self._state_file_index = -1
+        self._state_file_offset = 0
+
+        # ...
+
+        self._socket_R = socket_create_broadcast(ifname, '0.0.0.0', 5000)
+        self._socket_S = socket_create_broadcast(ifname,    ifaddr, 5000)
+
+    def prepare_files (self, filearray):
+        for path in filearray:
+            name = os.path.basename(path)
+            data = open(path, 'rb').read(-1)
+            size = len(data)
+
+            yield name, size, data
+
+    @property
+    def blocksize (self):
+        return self._blocksize
+
+    # MAC addresses
+    #
+
+    @property
+    def device_mac (self):
+        return self._device_mac
+
+    @property
+    def server_mac (self):
+        return self._server_mac
+
+    @property
+    def zeroes_mac (self):
+        return self._zeroes_mac
+
+    # Sockets
+    #
+
+    @property
+    def S (self):
+        return self._socket_S
+
+    @property
+    def R (self):
+        return self._socket_R
+
+    # Main loop
+    #
+
+    def serve (self):
+        try:
+            while 1:
+                rlist, wlist, xlist = select.select([ self.R ], [], [])
+
+                if len(rlist) < 1:
+                    continue
+
+                d, _ = self.R.recvfrom(self.blocksize + 20)
+                H, P = parse_packet(d)
+
+                # print('=>', H)
+                # print('  ', P[:4])
+
+                # (1) Filter out packets from other devices
+                if not (self.device_mac == H.sender_mac):
+                    continue
+
+                # (2) Filter out packets not destined to us
+                if not (self.server_mac == H.target_mac or self.zeroes_mac == H.target_mac):
+                    continue
+
+                if (H.target_seq < self.seq):
+                    print('Packet confirms previously confirmed packet, skipping.')
+                    continue
+
+                # print('=> off to be handled')
+
+                # (3) Handle what we have
+                self.handle_packet(H, P)
+
+        except KeyboardInterrupt:
+            self.R.close()
+            self.S.close()
+            raise
+
+    # Packet
+    #
+
+    def build_packet (self, H, buffer = bytes(), first = 0):
+
+        sender_seq = self.nextseq % (1 << 16)
+        target_seq = H.sender_seq if not(first) else 0
+
+        headermask = '< 6s 6s 4H'
+        headerbits = struct.pack(headermask,
+            self.server_mac,
+            self.device_mac,
+            0,
+            len(buffer),
+            sender_seq,
+            target_seq
+        )
+
+        return headerbits + buffer
+
+    def dispatch (self, packet):
+        self.S.sendto(packet, ('255.255.255.255', 5000))
+
+    # Sequencing
+    #
+
+    @property
+    def seq (self):
+        return self._seq
+
+    @property
+    def nextseq (self):
+        self._seq = self._seq + 1
+        return self._seq
+
+    # State
+    #
+
+    @property
+    def state (self):
+        return self._state
+
+    def instate (self, what):
+        return self._state == what
+
+    def upstate (self, what):
+        self._state = what
+
+    # Constants: state
+    #
+
+    STATE_WAIT_DSCV = 0
+    STATE_WAIT_XACK = 1
+    STATE_WAIT_STRT = 2
+    STATE_WAIT_WTRM = 3
+    STATE_WAIT_RETR_FILE = 4
+    STATE_WAIT_RETR_FILE_DATA = 5
+
+    # Constants: verbs
+    #
+
+    VERB_DSCV = b'DSCV'
+    VERB_YACK = b'YACK'
+    VERB_NACK = b'NACK'
+    VERB_STRT = b'STRT'
+    VERB_RETR = b'RETR'
+    VERB_WTRM = b'WTRM'
+
+    VERB_OFFR = b'OFFR'
+    VERB_FILE = b'FILE'
+    VERB_TERM = b'TERM'
+
+    # Packet processing 
+    #
+
+    def handle_packet (self, H, P):
+        match (verb := P[:4]):
+            case self.VERB_DSCV:
+                self.handle_packet_dscv(H, P)
+            case self.VERB_NACK:
+                self.handle_packet_nack(H, P)
+            case self.VERB_YACK:
+                self.handle_packet_yack(H, P)
+            case self.VERB_STRT:
+                self.handle_packet_strt(H, P)
+            case self.VERB_RETR:
+                self.handle_packet_retr(H, P)
+            case self.VERB_WTRM:
+                self.handle_packet_wtrm(H, P)
+            case _:
+                return
+
+    def handle_packet_dscv (self, H, P):
+        assert(self.instate(self.STATE_WAIT_DSCV))
+
+        self.upstate(self.STATE_WAIT_XACK)
+
+        # Dispatch OFFR
+        buffer = self.VERB_OFFR + bytes([ 0x0a, 0x0a ])
+        packet = self.build_packet(H, buffer, first = 1)
+        self.dispatch(packet)
+
+    def handle_packet_nack (self, H, P):
+        assert(self.instate(self.STATE_WAIT_XACK))
+        raise ValueError('License key (supplied via OFFR) rejected.')
+
+    def handle_packet_yack (self, H, P):
+        assert(self.instate(self.STATE_WAIT_XACK))
+
+        self.upstate(self.STATE_WAIT_STRT)
+
+        # Dispatch empty payload to acknowledge YACK
+        packet = self.build_packet(H)
+        self.dispatch(packet)
+
+    def handle_packet_strt (self, H, P):
+        assert(self.instate(self.STATE_WAIT_STRT))
+
+        self.upstate(self.STATE_WAIT_RETR_FILE)
+
+        # Dispatch empty payload to acknowledge YACK
+        packet = self.build_packet(H)
+        self.dispatch(packet)
+
+    def handle_packet_retr (self, H, P):
+        match self.state:
+            case self.STATE_WAIT_RETR_FILE:
+                self.handle_packet_retr_file(H, P)
+            case self.STATE_WAIT_RETR_FILE_DATA:
+                self.handle_packet_retr_file_data(H, P)
+            case _:
+                raise ValueError
+
+    # (1) Waiting to be asked to start sending information about file transfer,
+    # we must proceed differently
+    # ... if there are no files pending,
+    # ... if there are still files to be sent.
+
+    def handle_packet_retr_file (self, H, P):
+        assert(self.instate(self.STATE_WAIT_RETR_FILE))
+
+        if (self._state_file_index + 1) < len(self._filearray):
+            self.handle_packet_retr_file_next(H, P)
+        else:
+            self.handle_packet_retr_file_none(H, P)
+
+    def handle_packet_retr_file_next (self, H, P):
+        assert(self.instate(self.STATE_WAIT_RETR_FILE))
+
+        self.upstate(self.STATE_WAIT_RETR_FILE_DATA)
+
+        # ...
+
+        self._state_file_index = self._state_file_index + 1
+        self._state_file_offset = 0
+
+        print(self._state_file_index)
+
+        name, size, _ = self._filearray[self._state_file_index]
+
+        print('Dispatch {} with size {}'.format(name, size))
+
+        buffer = self.VERB_FILE + bytes([ 
+            0x0a, 
+            * name.encode('ascii'), 
+            0x0a,
+            * str(size).encode('ascii'), 
+            0x0a
+        ])
+        packet = self.build_packet(H, buffer)
+        self.dispatch(packet)
+
+    def handle_packet_retr_file_none (self, H, P):
+        assert(self.instate(self.STATE_WAIT_RETR_FILE))
+
+        self.upstate(self.STATE_WAIT_WTRM)
+
+        # ...
+
+        buffer = self.VERB_FILE + bytes([ 0x0a ])
+        packet = self.build_packet(H, buffer)
+        self.dispatch(packet)
+
+    # (2) Waiting to be asked to send file content.
+
+    def handle_packet_retr_file_data (self, H, P):
+        assert(self.instate(self.STATE_WAIT_RETR_FILE_DATA))
+
+        # ...
+        
+        beg = self._state_file_offset
+        end = self._state_file_offset + self._blocksize
+
+        self._state_file_offset = end;
+
+        buffer = self._filearray[self._state_file_index][2][beg:end]
+
+        if not len(buffer):
+            self.upstate(self.STATE_WAIT_RETR_FILE)
+
+        packet = self.build_packet(H, buffer)
+
+        self.dispatch(packet)
+
+    def handle_packet_wtrm (self, H, P):
+        assert(self.STATE_WAIT_WTRM == self.state)
+
+        self.upstate(self.STATE_WAIT_DSCV)
+
+        print('Finished.')
+
+        # TERM
+        buffer = self.VERB_TERM + bytes([ 0x0a, * b'Successful.', 0x0a ])
+        packet = self.build_packet(H, buffer)
+        self.dispatch(packet)
+
+def program (args):
+    U5000Server(
+        args.interface, args.address, args.device,
+        args.blocksize, args.payload
+    ).serve()
+
+if (__name__ == '__main__'):
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-i', '--interface', required = 1)
+    parser.add_argument('-A', '--address', required = 0)
+    parser.add_argument('-d', '--device', required = 1)
+    parser.add_argument('-s', '--blocksize', required = 0, default = 0, type = int)
+    parser.add_argument('payload', nargs = '+')
+
+    parsed = parser.parse_args()
+    program(parsed)
+
