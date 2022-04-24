@@ -1,0 +1,38 @@
+#!/bin/bash
+#
+
+set -e
+set -o pipefail
+
+function extract {
+  wrestool -R -x -n "${2}" "${1}" | tail -c +5 > "${3}"
+}
+
+# Check arguments first.
+#
+
+if [ ! "${#}" -eq 2 ]
+then
+  echo "${0}: netinstall.exe output-directory"
+  exit 1
+fi
+
+if [ ! -f "${1}" ]
+then
+  echo "${1} does not exist, aborting"
+  exit 2
+fi
+
+if [ ! -d "${2}" ]
+then
+  echo "${2} is not a directory, aborting"
+  exit 3
+fi
+
+# Extract (some) boot images
+#
+
+extract "${1}" 131 "${2}/vmlinux.mipsbe"
+extract "${1}" 137 "${2}/vmlinux.arm"
+extract "${1}" 139 "${2}/vmlinux.arm64"
+

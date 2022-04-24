@@ -50,4 +50,38 @@ Firmware installation
       name "autorun.scr"
     ● Transmission finished.
 
+Boot image extraction
+
+  tools/extract \
+    path/to/netinstall.exe \
+    path/to/tftp/directory
+
+  Extracts boot images from the Windows version of Netinstall.
+
+  While Netinstall supports a number of historic platforms, the script only
+  extracts boot images for MIPS (mipsbe), ARM and ARM64 platforms.
+
+  Please note that wrestool (a part of icotools) is required.
+
+DHCP server configuration
+
+  A configuration snippet for the ISC DHCP server follows. This configuration
+  requires that some TFTP server provides the boot images.
+
+    allow booting;
+    allow bootp;
+
+    next-server 192.168.90.1;
+
+    if substring(option vendor-class-identifier, 0, 9) = "Mips_boot" {
+      filename "vmlinux.mipsbe";
+    }
+
+    if substring(option vendor-class-identifier, 0, 9) = "ARM__boot" {
+      filename "vmlinux.arm";
+    }
+
+    if substring(option vendor-class-identifier, 0, 11) = "ARM64__boot" {
+      filename "vmlinux.arm64";
+    }
 
