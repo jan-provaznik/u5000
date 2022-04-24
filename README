@@ -21,8 +21,33 @@ Firmware installation
     --addresss 192.168.90.1 \
     --device de:ad:be:ef:c0:de \
     --blocksize 1000 \
-      files/routeros-7.2.1-mipsbe.npk
+      files/routeros-7.2.1-mipsbe.npk \
+      files/autorun.scr
 
   Pushes the specified files (NPK packages, autorun scripts) into the Mikrotik
   device identified by the MAC address.
-      
+
+  Example output
+
+    ▲ Network configuration
+      address "192.168.90.1"
+      interface "ens3"
+      send blocksize "1436"
+      recv blocksize "1500"
+
+    ⧗ Waiting for Mikrotik device with
+      hardware address "DE:AD:BE:EF:C0:DE"
+
+    ● Received a beacon from "RB951G-2HnD"
+      hardware address "DE:AD:BE:EF:C0:DE"
+      platform "mips" with firmware version "6.43.2"
+    ● Sending file "files/routeros-7.2.1-mipsbe.npk"
+      size "11885712"
+      name "routeros-7.2.1-mipsbe.npk"
+      .....................
+    ● Sending file "files/autorun.scr"
+      size "113"
+      name "autorun.scr"
+    ● Transmission finished.
+
+
