@@ -9,6 +9,14 @@ import socket
 import select
 import fcntl
 import time
+import sys
+
+# Helpers: stderr
+#
+
+def stderr (* args):
+    print(* args, file = sys.stderr)
+
 
 # Helpers: hw address (en|de)coding
 #
@@ -108,14 +116,18 @@ def parse_packet (buffer):
 
     return H, P
 
+# File information
+#
+
+FileInfo = collections.namedtuple('FileInfo', [
+    'path',
+    'name',
+    'size',
+    'data'
+])
+
+
 # Mikrotik, tick tock tick
-#
-# - ifname to bind to
-# - ifaddr to bind to
-# - device to talk to
-#
-# - blocksize to send by (~ 75% of mtu by default, 1400 bytes at most)
-# - filearray to send
 #
 
 class U5000Server (object):
@@ -126,47 +138,60 @@ class U5000Server (object):
             ifaddr = get_link_ip4(ifname)
             ifaddr = decode_ip4(ifaddr)
 
+        ifunit = get_link_mtu(ifname)
+
         if not blocksize:
-            blocksize = get_link_mtu(ifname)
-            blocksize = min(int(0.75 * blocksize), 1400)
+            # 20 bytes for mikrotik header
+            # 28 bytes for ip + udp headers (at least)
+            # 16 bytes for good luck
+            blocksize = ifunit - 20 - 28 - 16
 
-        # ...
+            # this should not happen (mtu is mandated to be at least 576)
+            if blocksize < 0:
+                raise ValueError('Insufficient link MTU.')
 
+        # Network interface configuration
         self._ifname = ifname
         self._ifaddr = ifaddr
+        self._ifunit = ifunit
 
+        # Encoded (byte-format) ethernet addresses
         self._device_mac = encode_mac(device)
         self._server_mac = get_link_mac(ifname)
         self._zeroes_mac = bytes([ 0x00 ] * 6)
 
-        # ...
-
+        # Prepare the files to be transmitted
         self._blocksize = blocksize
-        self._filearray = list(self.prepare_files(filearray))
+        self._filearray = self.prepare_files(filearray)
 
-        # ...
-
-        self._seq = 0
-        self._state = 0
-        self._state_file_index = -1
-        self._state_file_offset = 0
-
-        # ...
-
+        # Construct recv (R) and send (S) sockets
         self._socket_R = socket_create_broadcast(ifname, '0.0.0.0', 5000)
         self._socket_S = socket_create_broadcast(ifname,    ifaddr, 5000)
 
+        # Define initial state
+        self.restate()
+
     def prepare_files (self, filearray):
-        for path in filearray:
+        def prepare_file (path):
             name = os.path.basename(path)
             data = open(path, 'rb').read(-1)
             size = len(data)
-
-            yield name, size, data
+            return FileInfo(path, name, size, data)
+        return [ prepare_file(path) for path in filearray ]
 
     @property
     def blocksize (self):
         return self._blocksize
+
+    @property
+    def ifname (self):
+        return self._ifname
+    @property
+    def ifaddr (self):
+        return self._ifaddr
+    @property
+    def ifunit (self):
+        return self._ifunit
 
     # MAC addresses
     #
@@ -198,6 +223,10 @@ class U5000Server (object):
     #
 
     def serve (self):
+
+        self.print_conf()
+        self.print_wait_message()
+
         try:
             while 1:
                 rlist, wlist, xlist = select.select([ self.R ], [], [])
@@ -205,11 +234,13 @@ class U5000Server (object):
                 if len(rlist) < 1:
                     continue
 
-                d, _ = self.R.recvfrom(self.blocksize + 20)
-                H, P = parse_packet(d)
-
-                # print('=>', H)
-                # print('  ', P[:4])
+                try:
+                    d, _ = self.R.recvfrom(self.ifunit)
+                    H, P = parse_packet(d)
+                except Exception as ex:
+                    stderr('Warning! Malformed packet received.')
+                    stderr(ex)
+                    continue
 
                 # (1) Filter out packets from other devices
                 if not (self.device_mac == H.sender_mac):
@@ -219,13 +250,12 @@ class U5000Server (object):
                 if not (self.server_mac == H.target_mac or self.zeroes_mac == H.target_mac):
                     continue
 
+                # (3) Filter out somehow replicated packets
                 if (H.target_seq < self.seq):
-                    print('Packet confirms previously confirmed packet, skipping.')
+                    stderr('Warning! Packet confirms previously confirmed packet, skipping.')
                     continue
 
-                # print('=> off to be handled')
-
-                # (3) Handle what we have
+                # (4) Handle what is left
                 self.handle_packet(H, P)
 
         except KeyboardInterrupt:
@@ -281,6 +311,11 @@ class U5000Server (object):
     def upstate (self, what):
         self._state = what
 
+    def restate (self):
+        self._state_file_index = -1
+        self._state = 0
+        self._seq = 0
+
     # Constants: state
     #
 
@@ -328,12 +363,15 @@ class U5000Server (object):
     def handle_packet_dscv (self, H, P):
         assert(self.instate(self.STATE_WAIT_DSCV))
 
-        self.upstate(self.STATE_WAIT_XACK)
+        self.print_dscv_beacon(P)
 
         # Dispatch OFFR
         buffer = self.VERB_OFFR + bytes([ 0x0a, 0x0a ])
         packet = self.build_packet(H, buffer, first = 1)
         self.dispatch(packet)
+
+        #
+        self.upstate(self.STATE_WAIT_XACK)
 
     def handle_packet_nack (self, H, P):
         assert(self.instate(self.STATE_WAIT_XACK))
@@ -342,20 +380,22 @@ class U5000Server (object):
     def handle_packet_yack (self, H, P):
         assert(self.instate(self.STATE_WAIT_XACK))
 
-        self.upstate(self.STATE_WAIT_STRT)
-
         # Dispatch empty payload to acknowledge YACK
         packet = self.build_packet(H)
         self.dispatch(packet)
+
+        #
+        self.upstate(self.STATE_WAIT_STRT)
 
     def handle_packet_strt (self, H, P):
         assert(self.instate(self.STATE_WAIT_STRT))
 
-        self.upstate(self.STATE_WAIT_RETR_FILE)
-
         # Dispatch empty payload to acknowledge YACK
         packet = self.build_packet(H)
         self.dispatch(packet)
+
+        #
+        self.upstate(self.STATE_WAIT_RETR_FILE)
 
     def handle_packet_retr (self, H, P):
         match self.state:
@@ -363,8 +403,6 @@ class U5000Server (object):
                 self.handle_packet_retr_file(H, P)
             case self.STATE_WAIT_RETR_FILE_DATA:
                 self.handle_packet_retr_file_data(H, P)
-            case _:
-                raise ValueError
 
     # (1) Waiting to be asked to start sending information about file transfer,
     # we must proceed differently
@@ -382,72 +420,128 @@ class U5000Server (object):
     def handle_packet_retr_file_next (self, H, P):
         assert(self.instate(self.STATE_WAIT_RETR_FILE))
 
-        self.upstate(self.STATE_WAIT_RETR_FILE_DATA)
-
-        # ...
-
         self._state_file_index = self._state_file_index + 1
         self._state_file_offset = 0
+        self._state_file_passed = -1
 
-        print(self._state_file_index)
+        #
+        file = self._filearray[self._state_file_index]
 
-        name, size, _ = self._filearray[self._state_file_index]
+        #
+        self.print_file_info(file)
 
-        print('Dispatch {} with size {}'.format(name, size))
-
+        # Dispatch FILE (name, size)
         buffer = self.VERB_FILE + bytes([ 
             0x0a, 
-            * name.encode('ascii'), 
+            * file.name.encode('ascii'), 
             0x0a,
-            * str(size).encode('ascii'), 
+            * str(file.size).encode('ascii'), 
             0x0a
         ])
         packet = self.build_packet(H, buffer)
         self.dispatch(packet)
 
+        #
+        self.upstate(self.STATE_WAIT_RETR_FILE_DATA)
+
     def handle_packet_retr_file_none (self, H, P):
         assert(self.instate(self.STATE_WAIT_RETR_FILE))
 
-        self.upstate(self.STATE_WAIT_WTRM)
-
-        # ...
-
+        # Dispatch FILE (with empty args)
         buffer = self.VERB_FILE + bytes([ 0x0a ])
         packet = self.build_packet(H, buffer)
         self.dispatch(packet)
+        
+        #
+        self.upstate(self.STATE_WAIT_WTRM)
 
     # (2) Waiting to be asked to send file content.
 
     def handle_packet_retr_file_data (self, H, P):
         assert(self.instate(self.STATE_WAIT_RETR_FILE_DATA))
-
-        # ...
         
         beg = self._state_file_offset
         end = self._state_file_offset + self._blocksize
 
         self._state_file_offset = end;
+        file = self._filearray[self._state_file_index]
 
-        buffer = self._filearray[self._state_file_index][2][beg:end]
+        self.print_file_progress(file)
+
+        # Dispatch file contents
+        buffer = file.data[beg:end]
+        packet = self.build_packet(H, buffer)
+        self.dispatch(packet)
 
         if not len(buffer):
             self.upstate(self.STATE_WAIT_RETR_FILE)
 
-        packet = self.build_packet(H, buffer)
-
-        self.dispatch(packet)
-
     def handle_packet_wtrm (self, H, P):
-        assert(self.STATE_WAIT_WTRM == self.state)
+        assert(self.instate(self.STATE_WAIT_WTRM))
 
-        self.upstate(self.STATE_WAIT_DSCV)
+        self.print_wtrm_message()
 
-        print('Finished.')
-
-        # TERM
+        # Dispatch TERM
         buffer = self.VERB_TERM + bytes([ 0x0a, * b'Successful.', 0x0a ])
         packet = self.build_packet(H, buffer)
         self.dispatch(packet)
+
+        # Reset the state
+        self.restate()
+
+    # Utilities
+    #
+
+    def print_dscv_beacon (self, buffer):
+        fields = buffer.decode('ascii').split('\n')
+
+        addr = decode_mac(self.device_mac)
+        verb, swid, swkey, model, platform, version, * _ = fields
+
+        print('\u25cf Received a beacon from "{}"'.format(model))
+        print('  hardware address "{}"'.format(addr))
+        print('  platform "{}" with firmware version "{}"'.format(platform, version))
+
+    def print_file_info (self, file):
+        print('\u25cf Sending file "{}"'.format(file.path))
+        print('  size "{}"'.format(file.size))
+        print('  name "{}"'.format(file.name))
+
+    def print_wtrm_message (self):
+        print('\u25cf Transmission finished.')
+        print()
+
+    def print_wait_message (self):
+        addr = decode_mac(self.device_mac)
+
+        print('\u29d7 Waiting for Mikrotik device with')
+        print('  hardware address "{}"'.format(addr))
+        print()
+
+    def print_conf (self):
+        print('\u25b2 Network configuration')
+        print('  address "{}"'.format(self.ifaddr))
+        print('  interface "{}"'.format(self.ifname))
+        print('  send blocksize "{}"'.format(self.blocksize))
+        print('  recv blocksize "{}"'.format(self.ifunit))
+        print()
+
+    def print_file_progress (self, file):
+        if file.size > self.blocksize:
+
+            state = self._state_file_passed
+            offset = self._state_file_offset
+            passed = int((offset / file.size) * 100)
+
+            if state < 0:
+                print('  ', end = '', flush = 1)
+
+            if (0 == (passed % 5)) and (passed > state):
+                self._state_file_passed = passed
+                print('.', flush = 1, end = '')
+
+            if (offset >= file.size) and (passed > state):
+                print()
 
 def program (args):
     U5000Server(
