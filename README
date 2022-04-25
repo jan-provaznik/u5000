@@ -2,7 +2,7 @@ u5000, an alternative implementation of the network installation protocol used
 by Mikrotik routers and switches.
 
 Please note that the MAC addresses are anonymized in the examples. So far the
-cde has been testes with the following devices.
+code has been testes with the following devices.
 
   RB493AH (mipsbe)
   RB951G-2HnD (mipsbe)
