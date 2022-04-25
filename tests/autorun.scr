@@ -1,0 +1,4 @@
+/system/routerboard/settings/set boot-device=try-ethernet-once-then-nand 
+/system/routerboard/settings/set silent-boot=yes
+/system/identity/set name=MikroTikTest
+

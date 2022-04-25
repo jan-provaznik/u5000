@@ -1,0 +1,8 @@
+The routeros packages are not bundled with this package. You may, however,
+acquire them from Mikrotik at https://mikrotik.com/download or directly by
+invoking the following commands.
+
+  wget https://download.mikrotik.com/routeros/7.2.1/routeros-7.2.1-arm.npk
+  wget https://download.mikrotik.com/routeros/7.2.1/routeros-7.2.1-arm64.npk
+  wget https://download.mikrotik.com/routeros/7.2.1/routeros-7.2.1-mipsbe.npk
+
