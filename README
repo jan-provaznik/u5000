@@ -1,6 +1,12 @@
 u5000, an alternative implementation of the network installation protocol used
 by Mikrotik routers and switches.
 
+Please note that the MAC addresses are anonymized in the examples. So far the
+cde has been testes with the following devices.
+
+  RB493AH (mipsbe)
+  RB951G-2HnD (mipsbe)
+
 Device discovery
 
   u5000/discovery \
@@ -14,6 +20,19 @@ Device discovery
   This utility collects incoming beacons over the timespan interval. It then
   produces a list of discovered devices.
 
+  Example output
+
+    Collecting beacons over the next 5 seconds.
+    ..........
+    Collected 10 beacons from 2 unique devices.
+
+    ● Device 1 model "RB951G-2HnD"
+      hardware address "DE:AD:BE:EF:C0:DE"
+      platform "mips" with firmware version "6.43.2"
+    ● Device 2 model "RB493AH"
+      hardware address "DE:AD:BE:EF:C1:DE"
+      platform "mips" with firmware version "0.0  
+
 Firmware installation
 
   u5000/installer \
@@ -24,7 +43,7 @@ Firmware installation
       files/routeros-7.2.1-mipsbe.npk \
       files/autorun.scr
 
-  Pushes the specified files (NPK packages, autorun scripts) into the Mikrotik
+  Pushes the specified files (NPK package, autorun script) into the Mikrotik
   device identified by the MAC address.
 
   Example output
@@ -63,25 +82,34 @@ Boot image extraction
 
   Please note that wrestool (a part of icotools) is required.
 
-DHCP server configuration
+DHCP server configuration snippet
 
   A configuration snippet for the ISC DHCP server follows. This configuration
-  requires that some TFTP server provides the boot images.
+  requires that some TFTP server (like atftpd) provides the boot images.
 
-    allow booting;
-    allow bootp;
+    default-lease-time 60;
+    max-lease-time 120;
+    authoritative;
 
-    next-server 192.168.90.1;
+    subnet 192.168.90.0 netmask 255.255.255.0 {
+      range dynamic-bootp 192.168.90.200 192.168.90.240;
 
-    if substring(option vendor-class-identifier, 0, 9) = "Mips_boot" {
-      filename "vmlinux.mipsbe";
-    }
+      option domain-name-servers 8.8.8.8, 1.1.1.1;
+      option routers 192.168.90.1;  
 
-    if substring(option vendor-class-identifier, 0, 9) = "ARM__boot" {
-      filename "vmlinux.arm";
-    }
+      allow booting;
+      allow bootp;
 
-    if substring(option vendor-class-identifier, 0, 11) = "ARM64__boot" {
-      filename "vmlinux.arm64";
+      next-server 192.168.90.1;
+
+      if substring(option vendor-class-identifier, 0, 9) = "Mips_boot" {
+        filename "vmlinux.mipsbe";
+      }
+      if substring(option vendor-class-identifier, 0, 9) = "ARM__boot" {
+        filename "vmlinux.arm";
+      }
+      if substring(option vendor-class-identifier, 0, 11) = "ARM64__boot" {
+        filename "vmlinux.arm64";
+      }
     }
 
