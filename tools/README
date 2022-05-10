@@ -1,0 +1,18 @@
+The netinstall executable is not bundled with this package. You may, however,
+acquire them from Mikrotik at https://mikrotik.com/download or directly by
+invoking the following commands. The netinstall package archive must be
+decompressed first. The extraction script only works with the executable.
+
+The following sequence of commands downloads the archive, decompresses it 
+and extracts the boot images. The files are downloaded and extracted in the 
+usual temporary directory (the /tmp directory) used on Linux platforms.
+
+  wget -O /tmp/netinstall.zip \
+    https://download.mikrotik.com/routeros/7.2.3/netinstall-7.2.3.zip
+
+  unzip -d /tmp \
+    /tmp/netinstall.zip
+
+  bash ./extract \
+    /tmp/netinstall.exe /tmp
+
