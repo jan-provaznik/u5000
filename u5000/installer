@@ -385,6 +385,9 @@ class U5000Server (object):
         self.dispatch(packet)
 
         #
+        self.print_yack_message()
+
+        #
         self.upstate(self.STATE_WAIT_STRT)
 
     def handle_packet_strt (self, H, P):
@@ -501,6 +504,9 @@ class U5000Server (object):
         print('\u25cf Received a beacon from "{}"'.format(model))
         print('  hardware address "{}"'.format(addr))
         print('  platform "{}" with firmware version "{}"'.format(platform, version))
+
+    def print_yack_message (self):
+        print('\u25cf Formatting flash memory')
 
     def print_file_info (self, file):
         print('\u25cf Sending file "{}"'.format(file.path))
