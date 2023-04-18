@@ -6,9 +6,11 @@ code has been tested with the following devices.
 
   RB493AH (mipsbe)
   RB951G-2HnD (mipsbe)
+  RB962UiGS-5HacT2HnT (mipsbe)
   CRS326-24S+2Q+ (mipsbe)
   CRS354-48G-4S+2Q+ (mipsbe)
   CRS305-1G-4S+ (arm)
+  cAP XL ac (arm)
 
 Device discovery
 
@@ -63,6 +65,7 @@ Firmware installation
     ● Received a beacon from "RB951G-2HnD"
       hardware address "DE:AD:BE:EF:C0:DE"
       platform "mips" with firmware version "6.43.2"
+    ● Formatting flash memory
     ● Sending file "files/routeros-7.2.1-mipsbe.npk"
       size "11885712"
       name "routeros-7.2.1-mipsbe.npk"
