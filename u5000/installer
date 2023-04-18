@@ -492,6 +492,9 @@ class U5000Server (object):
         # Reset the state
         self.restate()
 
+        # Actually, do exit, please.
+        sys.exit(0)
+
     # Utilities
     #
 
