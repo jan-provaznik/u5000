@@ -12,6 +12,7 @@ code has been tested with the following devices.
   CRS328-24P-4S+RM (arm)
   CRS305-1G-4S+ (arm)
   cAP XL ac (arm)
+  cAP ax (arm64)
 
 Device discovery
 
